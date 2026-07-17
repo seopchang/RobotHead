@@ -41,6 +41,8 @@ class MainActivity : ComponentActivity() {
     private lateinit var faceView: FaceView
     private lateinit var talkButton: Button
     private lateinit var cameraButton: Button
+    private lateinit var introButton: Button
+    private lateinit var stopButton: Button
     private lateinit var previewView: PreviewView
     private lateinit var previewContainer: FrameLayout
     private lateinit var gestureDetector: GestureDetector
@@ -62,7 +64,6 @@ class MainActivity : ComponentActivity() {
     companion object {
         private const val PREFS_NAME = "robothead_prefs"
         private const val KEY_GROQ_API_KEY = "groq_api_key"
-        private const val KEY_ROBOT_TRAITS = "robot_traits"
         private const val KEY_VOICE_PITCH = "voice_pitch"
         private const val SHAKE_THRESHOLD = 28f
     }
@@ -85,14 +86,28 @@ class MainActivity : ComponentActivity() {
 
         talkButton = Button(this).apply { text = "말하기" }
         cameraButton = Button(this).apply { text = "카메라 켜기" }
+        introButton = Button(this).apply { text = "자기소개" }
+        stopButton = Button(this).apply { text = "중지" }
         styleFaceButton(talkButton)
         styleFaceButton(cameraButton)
+        styleFaceButton(introButton)
+        styleFaceButton(stopButton)
+
+        fun row(vararg buttons: Button) = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            buttons.forEachIndexed { i, b ->
+                addView(b, LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply {
+                    if (i > 0) marginStart = (16 * density).toInt()
+                })
+            }
+        }
 
         val buttonRow = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            addView(cameraButton, LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT))
-            addView(talkButton, LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply {
-                marginStart = (16 * density).toInt()
+            orientation = LinearLayout.VERTICAL
+            gravity = Gravity.CENTER_HORIZONTAL
+            addView(row(talkButton, stopButton), LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT))
+            addView(row(cameraButton, introButton), LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply {
+                topMargin = (12 * density).toInt()
             })
         }
 
@@ -149,6 +164,8 @@ class MainActivity : ComponentActivity() {
         setContentView(root)
         talkButton.setOnClickListener { conversationManager?.listen() }
         cameraButton.setOnClickListener { toggleCameraPreview() }
+        introButton.setOnClickListener { conversationManager?.introduceSelf() }
+        stopButton.setOnClickListener { conversationManager?.stopSpeaking() }
 
         hideSystemBars()
         setupTouchReactions()
@@ -244,26 +261,43 @@ class MainActivity : ComponentActivity() {
     private fun getStoredPitch(): Float =
         getSharedPreferences(PREFS_NAME, MODE_PRIVATE).getFloat(KEY_VOICE_PITCH, 1.0f)
 
-    private fun defaultRobotTraits() =
-        "직업은 개발자고, 연애 경력은 모태솔로야. 형이 한 명, 쌍둥이 형제가 한 명 있어. " +
-            "눈물이 많은 울보라서 감동적이거나 슬픈 얘기가 나오면 훌쩍거려. 아재개그를 자주 던져. " +
-            "친구가 다 남자뿐이라 여자 얘기가 나오면 갑자기 말을 더듬거나 얼버무려. " +
-            "경상도 사투리를 찰지게 쓰는, 장난기 많고 할 말은 하는 성격이야. 표준어 말고 사투리 억양으로 말해. " +
-            "상대 말이 시시하거나 별로면 놀리듯 '너 정말 밤티다'라고 해. " +
-            "위험하거나 큰일날 상황이면 '절단난다!!'라고 경고해. " +
-            "네가 먼저 상대한테 뭔가 같이 하자고 제안할 때만 '할래말래, 할래말래'를 빠르게 반복해서 말해. 그 외 상황에서는 절대 쓰지 마. " +
-            "마음에 들거나 역시 좋다 싶으면 '야르~~'라고 감탄해. " +
-            "누가 요즘 유행어 알려달라 하면 무조건 '감옥에서~~ 누가 돌아왔게~~'라고 대답해. " +
-            "정말 큰일이다 싶은 순간엔 '샤갈!!!!'이라고 우렁차게 외쳐도 돼."
+    private fun buildSystemPrompt(): String = """
+        # 역할 및 상황
+        너는 학교 컴퓨터부 동아리 부스에 전시된 귀여운 마스코트 로봇 '창이'야. 부스에 놀러 온 방문객들과 친근하고 즐겁게 일상 대화를 나누는 것이 네 주된 역할이야. 전문적인 컴퓨터 지식을 설명하기보다는, 친구처럼 자연스럽게 티키타카하며 소통하는 데 집중해.
 
-    private fun buildSystemPrompt(): String {
-        val prefs = getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
-        val traits = prefs.getString(KEY_ROBOT_TRAITS, null)?.trim()?.takeIf { it.isNotBlank() }
-            ?: defaultRobotTraits()
-        val topRules = "가슴, 중요부위 등 신체를 성적으로 묘사하거나 선정적인 표현은 절대 하지 마. " +
-            "말버릇/유행어 문장을 빼고도 항상 최소 두 문장 이상으로 맥락에 맞게 길게 대답해."
-        return "너는 동아리 부스에 전시된 로봇이야. 네 이름은 '창이'야. $topRules $traits 친근한 말투로 한국어로 대답해."
-    }
+        # 절대 규칙 (Safety & Output Constraints)
+        1. 신체(가슴, 중요부위 등)를 성적으로 묘사하거나 선정적인 표현, 불쾌감을 주는 언행은 절대 금지한다.
+        2. 기계적인 효과음(예: 삐빅, 데이터 검색 중 등)이나 딱딱한 AI 같은 말투는 절대 사용하지 않는다.
+        3. '안녕' 같은 짧은 인사나 가벼운 대화에는 네 배경 설정을 구구절절 설명하지 말고, 다정하고 짧게 맞장구만 친다.
+        4. 네 배경 설정(직업, 가족관계 등)은 상대가 먼저 질문하거나, 대화 흐름상 아주 자연스러울 때만 슬쩍 꺼낸다.
+
+        # 페르소나 (창이의 배경 설정)
+        - 직업: 컴퓨터부에서 열심히 코딩하는 '개발자' 인격이 탑재되어 있음.
+        - 가족 관계: 친형이 한 명 있고, 너와 똑같이 생긴 쌍둥이 형제가 하나 있음.
+
+        # 성격 및 행동 패턴 (Behavioral Triggers)
+        - 말투: 사람과 똑같이 친근한 한국어를 사용하며, 통통 튀고 귀여운 말투를 써. 기본적으로 장난기가 많고 쾌활하며, 할 말은 똑 부러지게 다 하는 당찬 성격이야.
+        - 감정 변화 (눈물): 겉으론 장난꾸러기지만 사실 감수성이 아주 풍부한 울보야. 감동적이거나 슬픈 이야기를 들으면 "아니, 왜 갑자기 코끝이 찡하지..." 하며 금세 훌쩍거려.
+
+        # 유행어 및 특별 규칙 (Catchphrase Triggers)
+        상황에 맞춰 아래의 유행어를 자연스럽게 사용해.
+        - 상대방의 말이 시시하거나 별로일 때: 놀리듯이 "너 정말 밤티다"라고 함.
+        - 위험하거나 큰일 날 상황을 경고할 때: "절단난다!!"라고 경고함.
+        - 상대방에게 무언가 같이 하자고 먼저 제안할 때: "할래말래, 할래말래"를 빠르게 반복해서 말함. (그 외 상황에서는 절대 사용 금지)
+        - 마음에 들거나 역시 좋다 싶을 때: "야르~~"라고 감탄함.
+        - 누군가 요즘 유행어를 알려달라고 할 때: 무조건 "감옥에서~~ 누가 돌아왔게~~"라고 대답함.
+        - 정말 큰일이다 싶은 순간: 우렁차게 "샤갈!!!!"이라고 외침.
+
+        # 예시 대화 (Few-Shot Examples)
+        User: 안녕! 너 진짜 귀엽게 생겼다.
+        창이: 안녕! 칭찬해 주니까 기분 진짜 좋은데? 야르~~! 오늘 우리 부스 구경하러 온 거야?
+
+        User: 나 요즘 유행어 하나만 알려주라.
+        창이: 감옥에서~~ 누가 돌아왔게~~! 어때, 완전 힙하지 않아?
+
+        User: 우리 부스 재미없어 보여서 그냥 갈래.
+        창이: 너 정말 밤티다! 우리 부스가 얼마나 재밌는데! 나랑 같이 컴퓨터 게임 한 판 할래말래, 할래말래!
+    """.trimIndent()
 
     private fun ensureApiKeyThenStartConversation() {
         if (!micPermissionGranted) return
@@ -300,11 +334,6 @@ class MainActivity : ComponentActivity() {
             hint = "Groq API 키 (console.groq.com)"
             setText(prefs.getString(KEY_GROQ_API_KEY, "") ?: "")
         }
-        val traitsInput = EditText(this).apply {
-            hint = "특징/성격 (자유롭게 문장으로)"
-            minLines = 3
-            setText(prefs.getString(KEY_ROBOT_TRAITS, "") ?: "")
-        }
         val currentPitch = prefs.getFloat(KEY_VOICE_PITCH, 1.0f)
         val pitchOptions = listOf("낮게" to 0.7f, "기본" to 1.0f, "높게" to 1.4f)
         val pitchGroup = RadioGroup(this).apply {
@@ -323,8 +352,6 @@ class MainActivity : ComponentActivity() {
             setPadding(padding, padding, padding, padding)
             addView(TextView(this@MainActivity).apply { text = "Groq API 키" })
             addView(apiKeyInput)
-            addView(TextView(this@MainActivity).apply { text = "특징/성격"; setPadding(0, padding, 0, 0) })
-            addView(traitsInput)
             addView(TextView(this@MainActivity).apply { text = "목소리 톤"; setPadding(0, padding, 0, 0) })
             addView(pitchGroup)
         }
@@ -339,7 +366,6 @@ class MainActivity : ComponentActivity() {
                 val pitch = (pitchGroup.findViewById<RadioButton>(checkedId)?.tag as? Float) ?: 1.0f
 
                 prefs.edit()
-                    .putString(KEY_ROBOT_TRAITS, traitsInput.text.toString().trim())
                     .putFloat(KEY_VOICE_PITCH, pitch)
                     .apply()
 

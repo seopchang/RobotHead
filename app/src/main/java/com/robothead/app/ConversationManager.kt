@@ -10,6 +10,7 @@ import android.speech.tts.TextToSpeech
 import android.speech.tts.UtteranceProgressListener
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -31,6 +32,7 @@ class ConversationManager(
     private var ttsReady = false
     private var running = false
     private val utteranceCounter = AtomicInteger(0)
+    private var mouthAnimationJob: Job? = null
 
     fun start() {
         running = true
@@ -99,6 +101,16 @@ class ConversationManager(
         speechRecognizer?.startListening(intent)
     }
 
+    fun introduceSelf() {
+        handleUserSpeech("너 자신을 자기소개 해줘")
+    }
+
+    fun stopSpeaking() {
+        mouthAnimationJob?.cancel()
+        tts?.stop()
+        onMouthAmount(0f)
+    }
+
     private fun isFaceQuestion(text: String) =
         text.contains("얼굴") && (text.contains("어때") || text.contains("어떠"))
 
@@ -129,21 +141,20 @@ class ConversationManager(
 
     fun speak(text: String) {
         if (!ttsReady) return
-        animateMouthWhileSpeaking(text.length)
+        mouthAnimationJob?.cancel()
+        mouthAnimationJob = animateMouthWhileSpeaking(text.length)
         tts?.stop()
         tts?.speak(text, TextToSpeech.QUEUE_FLUSH, null, "robothead-${utteranceCounter.incrementAndGet()}")
     }
 
-    private fun animateMouthWhileSpeaking(textLength: Int) {
-        scope.launch(Dispatchers.Main) {
-            val durationMs = (textLength * 90L).coerceIn(600L, 8000L)
-            val steps = (durationMs / 120L).toInt().coerceAtLeast(1)
-            repeat(steps) { i ->
-                if (!running) return@launch
-                onMouthAmount(if (i % 2 == 0) 0.8f else 0.2f)
-                delay(120L)
-            }
-            onMouthAmount(0f)
+    private fun animateMouthWhileSpeaking(textLength: Int): Job = scope.launch(Dispatchers.Main) {
+        val durationMs = (textLength * 90L).coerceIn(600L, 8000L)
+        val steps = (durationMs / 120L).toInt().coerceAtLeast(1)
+        repeat(steps) { i ->
+            if (!running) return@launch
+            onMouthAmount(if (i % 2 == 0) 0.8f else 0.2f)
+            delay(120L)
         }
+        onMouthAmount(0f)
     }
 }
