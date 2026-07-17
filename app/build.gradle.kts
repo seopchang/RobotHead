@@ -1,10 +1,3 @@
-import java.util.Properties
-
-val localProps = Properties().apply {
-    val f = rootProject.file("local.properties")
-    if (f.exists()) f.inputStream().use { load(it) }
-}
-
 plugins {
     id("com.android.application")
 }
@@ -19,16 +12,6 @@ android {
         targetSdk = 36
         versionCode = 1
         versionName = "1.0"
-
-        buildConfigField(
-            "String",
-            "GROQ_API_KEY",
-            "\"${localProps.getProperty("GROQ_API_KEY", "")}\""
-        )
-    }
-
-    buildFeatures {
-        buildConfig = true
     }
 
     buildTypes {

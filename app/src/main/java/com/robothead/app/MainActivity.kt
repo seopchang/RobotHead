@@ -1,10 +1,13 @@
 package com.robothead.app
 
 import android.Manifest
+import android.app.AlertDialog
 import android.content.pm.PackageManager
 import android.os.Bundle
+import android.view.GestureDetector
 import android.view.MotionEvent
 import android.view.WindowInsetsController
+import android.widget.EditText
 import androidx.activity.ComponentActivity
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.core.content.ContextCompat
@@ -16,16 +19,26 @@ import kotlin.random.Random
 class MainActivity : ComponentActivity() {
 
     private lateinit var faceView: FaceView
+    private lateinit var gestureDetector: GestureDetector
     private var faceTracker: FaceTracker? = null
     private var conversationManager: ConversationManager? = null
     private var faceVisible = false
     private var reacting = false
+    private var micPermissionGranted = false
+
+    companion object {
+        private const val PREFS_NAME = "robothead_prefs"
+        private const val KEY_GROQ_API_KEY = "groq_api_key"
+    }
 
     private val permissionLauncher = registerForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
     ) { results ->
         if (results[Manifest.permission.CAMERA] == true) startFaceTracking()
-        if (results[Manifest.permission.RECORD_AUDIO] == true) startConversation()
+        if (results[Manifest.permission.RECORD_AUDIO] == true) {
+            micPermissionGranted = true
+            ensureApiKeyThenStartConversation()
+        }
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -66,8 +79,9 @@ class MainActivity : ComponentActivity() {
         ) needed += Manifest.permission.RECORD_AUDIO
 
         if (needed.isEmpty()) {
+            micPermissionGranted = true
             startFaceTracking()
-            startConversation()
+            ensureApiKeyThenStartConversation()
         } else {
             permissionLauncher.launch(needed.toTypedArray())
         }
@@ -88,24 +102,67 @@ class MainActivity : ComponentActivity() {
         ).also { it.start() }
     }
 
-    private fun startConversation() {
-        if (conversationManager != null) return
+    private fun getStoredApiKey(): String? =
+        getSharedPreferences(PREFS_NAME, MODE_PRIVATE).getString(KEY_GROQ_API_KEY, null)
+
+    private fun saveApiKey(key: String) {
+        getSharedPreferences(PREFS_NAME, MODE_PRIVATE).edit()
+            .putString(KEY_GROQ_API_KEY, key)
+            .apply()
+    }
+
+    private fun ensureApiKeyThenStartConversation() {
+        if (!micPermissionGranted) return
+        val key = getStoredApiKey()
+        if (key.isNullOrBlank()) {
+            showApiKeyDialog()
+        } else {
+            restartConversation(key)
+        }
+    }
+
+    private fun restartConversation(apiKey: String) {
+        conversationManager?.stop()
         conversationManager = ConversationManager(
             context = this,
-            apiKey = BuildConfig.GROQ_API_KEY,
+            apiKey = apiKey,
             scope = lifecycleScope,
             onMouthAmount = { amount -> faceView.setMouthOpenAmount(amount) }
         ).also { it.start() }
     }
 
-    private fun setupTouchReactions() {
-        faceView.setOnTouchListener { _, event ->
-            if (event.action == MotionEvent.ACTION_DOWN) {
-                val isUpperHalf = event.y < faceView.height * 0.5f
-                triggerReaction(pet = isUpperHalf)
-            }
-            true
+    private fun showApiKeyDialog() {
+        val input = EditText(this).apply {
+            hint = "Groq API 키 (console.groq.com)"
+            setText(getStoredApiKey() ?: "")
         }
+        AlertDialog.Builder(this)
+            .setTitle("Groq API 키 입력")
+            .setView(input)
+            .setPositiveButton("저장") { _, _ ->
+                val key = input.text.toString().trim()
+                if (key.isNotBlank()) {
+                    saveApiKey(key)
+                    restartConversation(key)
+                }
+            }
+            .setNegativeButton("취소", null)
+            .show()
+    }
+
+    private fun setupTouchReactions() {
+        gestureDetector = GestureDetector(this, object : GestureDetector.SimpleOnGestureListener() {
+            override fun onDown(e: MotionEvent): Boolean {
+                val isUpperHalf = e.y < faceView.height * 0.5f
+                triggerReaction(pet = isUpperHalf)
+                return true
+            }
+
+            override fun onLongPress(e: MotionEvent) {
+                showApiKeyDialog()
+            }
+        })
+        faceView.setOnTouchListener { _, event -> gestureDetector.onTouchEvent(event) }
     }
 
     private fun triggerReaction(pet: Boolean) {
