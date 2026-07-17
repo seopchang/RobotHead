@@ -4,8 +4,11 @@ import android.content.Context
 import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Paint
+import android.graphics.Path
 import android.graphics.RectF
 import android.view.View
+import kotlin.math.cos
+import kotlin.math.sin
 
 class FaceView(context: Context) : View(context) {
 
@@ -20,11 +23,27 @@ class FaceView(context: Context) : View(context) {
         strokeCap = Paint.Cap.ROUND
     }
     private val mouthFillPaint = Paint().apply { color = Color.CYAN; isAntiAlias = true }
+    private val nosePaint = Paint().apply {
+        color = Color.CYAN
+        isAntiAlias = true
+        style = Paint.Style.STROKE
+        strokeWidth = 10f
+        strokeCap = Paint.Cap.ROUND
+        strokeJoin = Paint.Join.ROUND
+    }
+    private val dizzySpiralPaint = Paint().apply {
+        color = Color.BLACK
+        isAntiAlias = true
+        style = Paint.Style.STROKE
+        strokeCap = Paint.Cap.ROUND
+    }
 
     private var eyeOffsetX = 0f
     private var eyeOffsetY = 0f
     private var eyeOpenAmount = 1f
     private var mouthOpenAmount = 0f
+    private var dizzy = false
+    private var dizzyRotationDeg = 0f
 
     fun setEyeOffset(x: Float, y: Float) {
         eyeOffsetX = x.coerceIn(-1f, 1f)
@@ -42,20 +61,32 @@ class FaceView(context: Context) : View(context) {
         postInvalidateOnAnimation()
     }
 
+    fun setDizzy(v: Boolean) {
+        dizzy = v
+        postInvalidateOnAnimation()
+    }
+
+    fun setDizzyRotation(degrees: Float) {
+        dizzyRotationDeg = degrees
+        postInvalidateOnAnimation()
+    }
+
     override fun onDraw(canvas: Canvas) {
         super.onDraw(canvas)
         canvas.drawRect(0f, 0f, width.toFloat(), height.toFloat(), backgroundPaint)
 
         val centerX = width / 2f
         val centerY = height / 2f
-        val eyeRadius = minOf(width, height) * 0.09f
+        val eyeRadius = minOf(width, height) * 0.13f
         val eyeOffsetXPx = width * 0.18f
-        val eyeY = centerY - eyeRadius
+        val eyeY = centerY - eyeRadius * 1.1f
         val maxPupilShift = eyeRadius * 0.45f
 
         for (side in floatArrayOf(-1f, 1f)) {
             val ex = centerX + side * eyeOffsetXPx
-            if (eyeOpenAmount < 0.08f) {
+            if (dizzy) {
+                drawSpiralEye(canvas, ex, eyeY, eyeRadius)
+            } else if (eyeOpenAmount < 0.08f) {
                 canvas.drawLine(ex - eyeRadius, eyeY, ex + eyeRadius, eyeY, lidPaint)
             } else {
                 val halfHeight = eyeRadius * eyeOpenAmount
@@ -72,9 +103,13 @@ class FaceView(context: Context) : View(context) {
             }
         }
 
-        val mouthY = centerY + height * 0.15f
-        val mouthHalfWidth = width * 0.1f
-        if (mouthOpenAmount < 0.08f) {
+        drawNose(canvas, centerX, eyeY + eyeRadius * 1.6f, eyeRadius * 0.35f)
+
+        val mouthY = centerY + height * 0.2f
+        val mouthHalfWidth = width * 0.15f
+        if (dizzy) {
+            drawWavyMouth(canvas, centerX, mouthY, mouthHalfWidth)
+        } else if (mouthOpenAmount < 0.08f) {
             canvas.drawLine(centerX - mouthHalfWidth, mouthY, centerX + mouthHalfWidth, mouthY, lidPaint)
         } else {
             val mouthHeight = mouthHalfWidth * mouthOpenAmount
@@ -83,5 +118,47 @@ class FaceView(context: Context) : View(context) {
                 mouthFillPaint
             )
         }
+    }
+
+    private fun drawNose(canvas: Canvas, cx: Float, cy: Float, size: Float) {
+        val path = Path().apply {
+            moveTo(cx - size * 0.5f, cy - size)
+            lineTo(cx + size * 0.2f, cy + size * 0.6f)
+            lineTo(cx + size * 0.9f, cy + size * 0.6f)
+        }
+        canvas.drawPath(path, nosePaint)
+    }
+
+    private fun drawSpiralEye(canvas: Canvas, cx: Float, cy: Float, radius: Float) {
+        canvas.drawCircle(cx, cy, radius, eyePaint)
+        canvas.save()
+        canvas.rotate(dizzyRotationDeg, cx, cy)
+        val path = Path()
+        val turns = 2.2f
+        val steps = 40
+        for (i in 0..steps) {
+            val t = i / steps.toFloat()
+            val angle = t * turns * 2f * Math.PI.toFloat()
+            val r = t * radius * 0.85f
+            val x = cx + r * cos(angle)
+            val y = cy + r * sin(angle)
+            if (i == 0) path.moveTo(x, y) else path.lineTo(x, y)
+        }
+        dizzySpiralPaint.strokeWidth = radius * 0.12f
+        canvas.drawPath(path, dizzySpiralPaint)
+        canvas.restore()
+    }
+
+    private fun drawWavyMouth(canvas: Canvas, cx: Float, cy: Float, halfWidth: Float) {
+        val path = Path()
+        val waveHeight = halfWidth * 0.25f
+        val segments = 4
+        path.moveTo(cx - halfWidth, cy)
+        for (i in 1..segments) {
+            val x = cx - halfWidth + (halfWidth * 2 / segments) * i
+            val y = cy + if (i % 2 == 0) waveHeight else -waveHeight
+            path.lineTo(x, y)
+        }
+        canvas.drawPath(path, lidPaint)
     }
 }

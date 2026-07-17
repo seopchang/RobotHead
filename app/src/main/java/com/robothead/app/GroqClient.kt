@@ -9,8 +9,34 @@ import java.net.URL
 object GroqClient {
     private const val ENDPOINT = "https://api.groq.com/openai/v1/chat/completions"
     private const val MODEL = "llama-3.1-8b-instant"
+    private const val VISION_MODEL = "meta-llama/llama-4-scout-17b-16e-instruct"
 
     fun chat(apiKey: String, systemPrompt: String, userMessage: String): String {
+        val messages = JSONArray().apply {
+            put(JSONObject().put("role", "system").put("content", systemPrompt))
+            put(JSONObject().put("role", "user").put("content", userMessage))
+        }
+        return send(apiKey, MODEL, messages)
+    }
+
+    fun chatVision(apiKey: String, systemPrompt: String, userMessage: String, imageBase64: String): String {
+        val content = JSONArray().apply {
+            put(JSONObject().put("type", "text").put("text", userMessage))
+            put(
+                JSONObject().put("type", "image_url").put(
+                    "image_url",
+                    JSONObject().put("url", "data:image/jpeg;base64,$imageBase64")
+                )
+            )
+        }
+        val messages = JSONArray().apply {
+            put(JSONObject().put("role", "system").put("content", systemPrompt))
+            put(JSONObject().put("role", "user").put("content", content))
+        }
+        return send(apiKey, VISION_MODEL, messages)
+    }
+
+    private fun send(apiKey: String, model: String, messages: JSONArray): String {
         val connection = URL(ENDPOINT).openConnection() as HttpURLConnection
         try {
             connection.requestMethod = "POST"
@@ -18,14 +44,10 @@ object GroqClient {
             connection.setRequestProperty("Content-Type", "application/json")
             connection.doOutput = true
             connection.connectTimeout = 10_000
-            connection.readTimeout = 15_000
+            connection.readTimeout = 20_000
 
-            val messages = JSONArray().apply {
-                put(JSONObject().put("role", "system").put("content", systemPrompt))
-                put(JSONObject().put("role", "user").put("content", userMessage))
-            }
             val body = JSONObject()
-                .put("model", MODEL)
+                .put("model", model)
                 .put("messages", messages)
                 .put("temperature", 0.7)
 

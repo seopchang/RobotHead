@@ -1,10 +1,13 @@
 package com.robothead.app
 
 import android.content.Context
+import android.util.Base64
 import androidx.annotation.OptIn
 import androidx.camera.core.CameraSelector
 import androidx.camera.core.ExperimentalGetImage
 import androidx.camera.core.ImageAnalysis
+import androidx.camera.core.ImageCapture
+import androidx.camera.core.ImageCaptureException
 import androidx.camera.core.ImageProxy
 import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.core.content.ContextCompat
@@ -24,6 +27,7 @@ class FaceTracker(
             .setPerformanceMode(FaceDetectorOptions.PERFORMANCE_MODE_FAST)
             .build()
     )
+    private var imageCapture: ImageCapture? = null
 
     fun start() {
         val cameraProviderFuture = ProcessCameraProvider.getInstance(context)
@@ -37,13 +41,41 @@ class FaceTracker(
                 processFrame(imageProxy)
             }
 
+            val capture = ImageCapture.Builder().build()
+            imageCapture = capture
+
             cameraProvider.unbindAll()
             cameraProvider.bindToLifecycle(
                 lifecycleOwner,
                 CameraSelector.DEFAULT_FRONT_CAMERA,
-                analysis
+                analysis,
+                capture
             )
         }, ContextCompat.getMainExecutor(context))
+    }
+
+    fun captureSnapshotBase64(onResult: (String?) -> Unit) {
+        val capture = imageCapture
+        if (capture == null) {
+            onResult(null)
+            return
+        }
+        capture.takePicture(
+            ContextCompat.getMainExecutor(context),
+            object : ImageCapture.OnImageCapturedCallback() {
+                override fun onCaptureSuccess(image: ImageProxy) {
+                    val buffer = image.planes[0].buffer
+                    val bytes = ByteArray(buffer.remaining())
+                    buffer.get(bytes)
+                    image.close()
+                    onResult(Base64.encodeToString(bytes, Base64.NO_WRAP))
+                }
+
+                override fun onError(exception: ImageCaptureException) {
+                    onResult(null)
+                }
+            }
+        )
     }
 
     @OptIn(ExperimentalGetImage::class)

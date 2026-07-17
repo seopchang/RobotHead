@@ -14,20 +14,23 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.util.Locale
+import java.util.concurrent.atomic.AtomicInteger
 
 class ConversationManager(
     private val context: Context,
     private val apiKey: String,
     private val scope: CoroutineScope,
-    private val onMouthAmount: (Float) -> Unit
+    private val systemPrompt: String,
+    private val voicePitch: Float,
+    private val onMouthAmount: (Float) -> Unit,
+    private val onListeningChanged: (Boolean) -> Unit,
+    private val captureFaceSnapshot: suspend () -> String?
 ) {
     private var speechRecognizer: SpeechRecognizer? = null
     private var tts: TextToSpeech? = null
     private var ttsReady = false
     private var running = false
-
-    private val systemPrompt =
-        "너는 동아리 부스에 전시된 로봇의 머리야. 친근하고 짧게, 한두 문장으로 한국어로 대답해."
+    private val utteranceCounter = AtomicInteger(0)
 
     fun start() {
         running = true
@@ -35,22 +38,19 @@ class ConversationManager(
             ttsReady = status == TextToSpeech.SUCCESS
             if (ttsReady) {
                 tts?.language = Locale.KOREAN
+                tts?.setPitch(voicePitch)
                 tts?.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
                     override fun onStart(utteranceId: String?) {}
-
                     override fun onDone(utteranceId: String?) {
                         onMouthAmount(0f)
-                        listenOnce()
                     }
 
                     @Deprecated("deprecated in base class, still required to override")
                     override fun onError(utteranceId: String?) {
                         onMouthAmount(0f)
-                        listenOnce()
                     }
                 })
             }
-            listenOnce()
         }
     }
 
@@ -60,10 +60,11 @@ class ConversationManager(
         tts?.shutdown()
     }
 
-    private fun listenOnce() {
+    fun listen() {
         if (!running || !SpeechRecognizer.isRecognitionAvailable(context)) return
 
         speechRecognizer?.destroy()
+        onListeningChanged(true)
         speechRecognizer = SpeechRecognizer.createSpeechRecognizer(context).apply {
             setRecognitionListener(object : RecognitionListener {
                 override fun onReadyForSpeech(params: Bundle?) {}
@@ -73,17 +74,16 @@ class ConversationManager(
                 override fun onEndOfSpeech() {}
 
                 override fun onError(error: Int) {
-                    if (running) listenOnce()
+                    onListeningChanged(false)
                 }
 
                 override fun onResults(results: Bundle?) {
+                    onListeningChanged(false)
                     val text = results
                         ?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
                         ?.firstOrNull()
                     if (!text.isNullOrBlank()) {
                         handleUserSpeech(text)
-                    } else if (running) {
-                        listenOnce()
                     }
                 }
 
@@ -99,10 +99,27 @@ class ConversationManager(
         speechRecognizer?.startListening(intent)
     }
 
+    private fun isFaceQuestion(text: String) =
+        text.contains("얼굴") && (text.contains("어때") || text.contains("어떠"))
+
     private fun handleUserSpeech(text: String) {
         scope.launch(Dispatchers.IO) {
             val reply = try {
-                GroqClient.chat(apiKey, systemPrompt, text)
+                if (isFaceQuestion(text)) {
+                    val snapshot = captureFaceSnapshot()
+                    if (snapshot != null) {
+                        GroqClient.chatVision(
+                            apiKey,
+                            systemPrompt,
+                            "이 사진 속 사람 얼굴 특징을 재밌고 다정하게 한두 문장으로 묘사해줘",
+                            snapshot
+                        )
+                    } else {
+                        "카메라로 얼굴이 잘 안 보이네, 조금 더 가까이 와줄래?"
+                    }
+                } else {
+                    GroqClient.chat(apiKey, systemPrompt, text)
+                }
             } catch (e: Exception) {
                 "미안, 지금 대답하기 좀 힘드네."
             }
@@ -110,16 +127,12 @@ class ConversationManager(
         }
     }
 
-    private fun speak(text: String) {
-        if (!ttsReady || apiKeyMissing()) {
-            listenOnce()
-            return
-        }
+    fun speak(text: String) {
+        if (!ttsReady) return
         animateMouthWhileSpeaking(text.length)
-        tts?.speak(text, TextToSpeech.QUEUE_FLUSH, null, "robothead-utterance")
+        tts?.stop()
+        tts?.speak(text, TextToSpeech.QUEUE_FLUSH, null, "robothead-${utteranceCounter.incrementAndGet()}")
     }
-
-    private fun apiKeyMissing() = apiKey.isBlank()
 
     private fun animateMouthWhileSpeaking(textLength: Int) {
         scope.launch(Dispatchers.Main) {
