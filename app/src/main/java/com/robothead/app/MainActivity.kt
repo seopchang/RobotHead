@@ -3,6 +3,9 @@ package com.robothead.app
 import android.Manifest
 import android.app.AlertDialog
 import android.content.pm.PackageManager
+import android.graphics.Color
+import android.graphics.Outline
+import android.graphics.drawable.GradientDrawable
 import android.hardware.Sensor
 import android.hardware.SensorEvent
 import android.hardware.SensorEventListener
@@ -11,6 +14,8 @@ import android.os.Bundle
 import android.view.Gravity
 import android.view.GestureDetector
 import android.view.MotionEvent
+import android.view.View
+import android.view.ViewOutlineProvider
 import android.view.WindowInsetsController
 import android.widget.Button
 import android.widget.EditText
@@ -22,6 +27,7 @@ import android.widget.ScrollView
 import android.widget.TextView
 import androidx.activity.ComponentActivity
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.camera.view.PreviewView
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.lifecycleScope
 import kotlin.coroutines.resume
@@ -34,12 +40,16 @@ class MainActivity : ComponentActivity() {
 
     private lateinit var faceView: FaceView
     private lateinit var talkButton: Button
+    private lateinit var cameraButton: Button
+    private lateinit var previewView: PreviewView
+    private lateinit var previewContainer: FrameLayout
     private lateinit var gestureDetector: GestureDetector
     private var faceTracker: FaceTracker? = null
     private var conversationManager: ConversationManager? = null
     private var faceVisible = false
     private var reacting = false
     private var micPermissionGranted = false
+    private var cameraPreviewOn = false
 
     private var sensorManager: SensorManager? = null
     private var accelerometer: Sensor? = null
@@ -52,7 +62,6 @@ class MainActivity : ComponentActivity() {
     companion object {
         private const val PREFS_NAME = "robothead_prefs"
         private const val KEY_GROQ_API_KEY = "groq_api_key"
-        private const val KEY_ROBOT_NAME = "robot_name"
         private const val KEY_ROBOT_TRAITS = "robot_traits"
         private const val KEY_VOICE_PITCH = "voice_pitch"
         private const val SHAKE_THRESHOLD = 28f
@@ -70,11 +79,47 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        val density = resources.displayMetrics.density
+
         faceView = FaceView(this)
-        talkButton = Button(this).apply {
-            text = "말하기"
-            alpha = 0.6f
+
+        talkButton = Button(this).apply { text = "말하기" }
+        cameraButton = Button(this).apply { text = "카메라 켜기" }
+        styleFaceButton(talkButton)
+        styleFaceButton(cameraButton)
+
+        val buttonRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            addView(cameraButton, LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT))
+            addView(talkButton, LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply {
+                marginStart = (16 * density).toInt()
+            })
         }
+
+        previewView = PreviewView(this).apply {
+            scaleType = PreviewView.ScaleType.FILL_CENTER
+        }
+        val previewSizePx = (170 * density).toInt()
+        previewContainer = FrameLayout(this).apply {
+            addView(
+                previewView,
+                FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT)
+            )
+            background = GradientDrawable().apply {
+                shape = GradientDrawable.RECTANGLE
+                cornerRadius = 28f
+                setColor(Color.BLACK)
+                setStroke((4 * density).toInt(), Color.CYAN)
+            }
+            clipToOutline = true
+            outlineProvider = object : ViewOutlineProvider() {
+                override fun getOutline(view: View, outline: Outline) {
+                    outline.setRoundRect(0, 0, view.width, view.height, 28f)
+                }
+            }
+            visibility = View.INVISIBLE
+        }
+
         val root = FrameLayout(this).apply {
             addView(
                 faceView,
@@ -84,24 +129,51 @@ class MainActivity : ComponentActivity() {
                 )
             )
             addView(
-                talkButton,
+                previewContainer,
+                FrameLayout.LayoutParams(previewSizePx, previewSizePx).apply {
+                    gravity = Gravity.TOP or Gravity.CENTER_HORIZONTAL
+                    topMargin = (36 * density).toInt()
+                }
+            )
+            addView(
+                buttonRow,
                 FrameLayout.LayoutParams(
                     FrameLayout.LayoutParams.WRAP_CONTENT,
                     FrameLayout.LayoutParams.WRAP_CONTENT
                 ).apply {
                     gravity = Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL
-                    bottomMargin = (48 * resources.displayMetrics.density).toInt()
+                    bottomMargin = (48 * density).toInt()
                 }
             )
         }
         setContentView(root)
         talkButton.setOnClickListener { conversationManager?.listen() }
+        cameraButton.setOnClickListener { toggleCameraPreview() }
 
         hideSystemBars()
         setupTouchReactions()
         startIdleAnimation()
         setupShakeDetection()
         requestNeededPermissions()
+    }
+
+    private fun styleFaceButton(button: Button) {
+        button.setTextColor(Color.CYAN)
+        button.background = GradientDrawable().apply {
+            shape = GradientDrawable.RECTANGLE
+            cornerRadius = 20f
+            setColor(Color.BLACK)
+            setStroke((3 * resources.displayMetrics.density).toInt(), Color.CYAN)
+        }
+        val hPad = (24 * resources.displayMetrics.density).toInt()
+        val vPad = (12 * resources.displayMetrics.density).toInt()
+        button.setPadding(hPad, vPad, hPad, vPad)
+    }
+
+    private fun toggleCameraPreview() {
+        cameraPreviewOn = !cameraPreviewOn
+        previewContainer.visibility = if (cameraPreviewOn) View.VISIBLE else View.INVISIBLE
+        cameraButton.text = if (cameraPreviewOn) "카메라 끄기" else "카메라 켜기"
     }
 
     override fun onWindowFocusChanged(hasFocus: Boolean) {
@@ -146,6 +218,7 @@ class MainActivity : ComponentActivity() {
         faceTracker = FaceTracker(
             context = this,
             lifecycleOwner = this,
+            previewView = previewView,
             onFaceMoved = { x, y ->
                 faceVisible = true
                 faceView.setEyeOffset(x, y)
@@ -178,17 +251,18 @@ class MainActivity : ComponentActivity() {
             "경상도 사투리를 찰지게 쓰는, 장난기 많고 할 말은 하는 성격이야. 표준어 말고 사투리 억양으로 말해. " +
             "상대 말이 시시하거나 별로면 놀리듯 '너 정말 밤티다'라고 해. " +
             "위험하거나 큰일날 상황이면 '절단난다!!'라고 경고해. " +
-            "뭔가 같이 하자고 재촉하고 싶으면 '할래말래, 할래말래'를 빠르게 반복해서 말해. " +
+            "네가 먼저 상대한테 뭔가 같이 하자고 제안할 때만 '할래말래, 할래말래'를 빠르게 반복해서 말해. 그 외 상황에서는 절대 쓰지 마. " +
             "마음에 들거나 역시 좋다 싶으면 '야르~~'라고 감탄해. " +
             "누가 요즘 유행어 알려달라 하면 무조건 '감옥에서~~ 누가 돌아왔게~~'라고 대답해. " +
             "정말 큰일이다 싶은 순간엔 '샤갈!!!!'이라고 우렁차게 외쳐도 돼."
 
     private fun buildSystemPrompt(): String {
         val prefs = getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
-        val name = prefs.getString(KEY_ROBOT_NAME, null)?.trim()?.takeIf { it.isNotBlank() } ?: "창이"
         val traits = prefs.getString(KEY_ROBOT_TRAITS, null)?.trim()?.takeIf { it.isNotBlank() }
             ?: defaultRobotTraits()
-        return "너는 동아리 부스에 전시된 로봇이야. 네 이름은 '$name'이야. $traits 친근하고 짧게, 한두 문장으로 한국어로 대답해."
+        val topRules = "가슴, 중요부위 등 신체를 성적으로 묘사하거나 선정적인 표현은 절대 하지 마. " +
+            "말버릇/유행어 문장을 빼고도 항상 최소 두 문장 이상으로 맥락에 맞게 길게 대답해."
+        return "너는 동아리 부스에 전시된 로봇이야. 네 이름은 '창이'야. $topRules $traits 친근한 말투로 한국어로 대답해."
     }
 
     private fun ensureApiKeyThenStartConversation() {
@@ -226,10 +300,6 @@ class MainActivity : ComponentActivity() {
             hint = "Groq API 키 (console.groq.com)"
             setText(prefs.getString(KEY_GROQ_API_KEY, "") ?: "")
         }
-        val nameInput = EditText(this).apply {
-            hint = "로봇 이름"
-            setText(prefs.getString(KEY_ROBOT_NAME, "") ?: "")
-        }
         val traitsInput = EditText(this).apply {
             hint = "특징/성격 (자유롭게 문장으로)"
             minLines = 3
@@ -253,8 +323,6 @@ class MainActivity : ComponentActivity() {
             setPadding(padding, padding, padding, padding)
             addView(TextView(this@MainActivity).apply { text = "Groq API 키" })
             addView(apiKeyInput)
-            addView(TextView(this@MainActivity).apply { text = "로봇 이름"; setPadding(0, padding, 0, 0) })
-            addView(nameInput)
             addView(TextView(this@MainActivity).apply { text = "특징/성격"; setPadding(0, padding, 0, 0) })
             addView(traitsInput)
             addView(TextView(this@MainActivity).apply { text = "목소리 톤"; setPadding(0, padding, 0, 0) })
@@ -271,7 +339,6 @@ class MainActivity : ComponentActivity() {
                 val pitch = (pitchGroup.findViewById<RadioButton>(checkedId)?.tag as? Float) ?: 1.0f
 
                 prefs.edit()
-                    .putString(KEY_ROBOT_NAME, nameInput.text.toString().trim())
                     .putString(KEY_ROBOT_TRAITS, traitsInput.text.toString().trim())
                     .putFloat(KEY_VOICE_PITCH, pitch)
                     .apply()

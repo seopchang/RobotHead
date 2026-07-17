@@ -9,7 +9,9 @@ import androidx.camera.core.ImageAnalysis
 import androidx.camera.core.ImageCapture
 import androidx.camera.core.ImageCaptureException
 import androidx.camera.core.ImageProxy
+import androidx.camera.core.Preview
 import androidx.camera.lifecycle.ProcessCameraProvider
+import androidx.camera.view.PreviewView
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.LifecycleOwner
 import com.google.mlkit.vision.common.InputImage
@@ -19,6 +21,7 @@ import com.google.mlkit.vision.face.FaceDetectorOptions
 class FaceTracker(
     private val context: Context,
     private val lifecycleOwner: LifecycleOwner,
+    private val previewView: PreviewView,
     private val onFaceMoved: (xOffset: Float, yOffset: Float) -> Unit,
     private val onFaceLost: () -> Unit
 ) {
@@ -34,6 +37,10 @@ class FaceTracker(
         cameraProviderFuture.addListener({
             val cameraProvider = cameraProviderFuture.get()
 
+            val preview = Preview.Builder().build().also {
+                it.surfaceProvider = previewView.surfaceProvider
+            }
+
             val analysis = ImageAnalysis.Builder()
                 .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
                 .build()
@@ -48,6 +55,7 @@ class FaceTracker(
             cameraProvider.bindToLifecycle(
                 lifecycleOwner,
                 CameraSelector.DEFAULT_FRONT_CAMERA,
+                preview,
                 analysis,
                 capture
             )

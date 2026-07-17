@@ -37,7 +37,6 @@ class FaceView(context: Context) : View(context) {
         style = Paint.Style.STROKE
         strokeCap = Paint.Cap.ROUND
     }
-
     private var eyeOffsetX = 0f
     private var eyeOffsetY = 0f
     private var eyeOpenAmount = 1f
